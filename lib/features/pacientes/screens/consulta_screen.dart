@@ -4,7 +4,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/constants.dart';
 import '../widgets/consulta_resultados.dart';
 import '../models/paciente.dart';
-import '../services/paciente_service.dart';
+import '../services/paciente_odoo_service.dart';
 import '../services/cajacopi_service.dart';
 import '../models/validacion_tamizaje.dart';
 
@@ -21,57 +21,23 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
   bool _consultando = false;
   String? _errorMessage;
 
-  // Lista de tipos de documento soportados (code, label)
-  final List<Map<String, String>> _documentTypes = const [
-    {'code': 'CC', 'label': 'Cédula de ciudadanía'},
-    {'code': 'TI', 'label': 'Tarjeta de identidad'},
-    {'code': 'RC', 'label': 'Registro civil'},
-    {'code': 'NIT', 'label': 'NIT'},
-    {'code': 'PA', 'label': 'Pasaporte'},
-    {'code': 'CE', 'label': 'Cédula extranjera'},
-  ];
-
-  String _selectedTipoDoc = 'CC';
-
   @override
   void dispose() {
     _idCtrl.dispose();
     super.dispose();
   }
 
-  bool _tipoDocumentoAceptaSoloNumeros(String tipo) {
-    // Tipos que deben ser numéricos en nuestra lógica
-    const numeric = {'CC', 'TI', 'RC', 'NIT', 'CE'};
-    return numeric.contains(tipo.toUpperCase());
-  }
-
   Future<void> _consultarPaciente() async {
-    final raw = _idCtrl.text.trim();
+    final numeroDocumento = _idCtrl.text.trim();
 
-    if (raw.isEmpty) {
-      setState(() => _errorMessage = 'Por favor ingrese una cédula');
+    if (numeroDocumento.isEmpty) {
+      setState(() => _errorMessage = 'Por favor ingrese un número de documento');
       return;
     }
 
-    // Validaciones basadas en tipo de documento seleccionado
-    if (_tipoDocumentoAceptaSoloNumeros(_selectedTipoDoc)) {
-      if (RegExp(r'\D').hasMatch(raw)) {
-        setState(
-            () => _errorMessage = 'Este tipo de documento acepta sólo números');
-        return;
-      }
-      if (raw.length < 6) {
-        setState(() => _errorMessage =
-            'Número demasiado corto para este tipo de documento');
-        return;
-      }
-    } else {
-      // Para tipos que admiten letras (pasaporte, etc) validar longitud mínima
-      if (raw.length < 4) {
-        setState(() => _errorMessage =
-            'Número demasiado corto para este tipo de documento');
-        return;
-      }
+    if (numeroDocumento.length < 4) {
+      setState(() => _errorMessage = 'Número de documento demasiado corto');
+      return;
     }
 
     setState(() {
@@ -81,34 +47,32 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
     });
 
     try {
-      // 1. Buscar paciente en Odoo
-      var paciente = await PacienteService.buscarPorCedula(raw,
-          tipoDocumento: _selectedTipoDoc);
+      // 1. Buscar paciente en Odoo (sin especificar tipo, lo detecta desde Odoo)
+      var paciente = await PacienteOdooService.buscarPorDocumento(numeroDocumento);
 
       if (paciente != null) {
-        // 2. Validar en CajaCopi
+        // 2. Validar en CajaCopi usando el tipo de documento del paciente encontrado
         setState(() {
           // Actualizar UI para mostrar que se está validando con CajaCopi
         });
 
-        // Enviar a Cajacopi el valor almacenado en Odoo si está disponible,
-        // en caso contrario usar el valor ingresado por el usuario (raw).
-        final numeroParaCajacopi =
-            (paciente.cedula.isNotEmpty) ? paciente.cedula : raw;
+        print('🔄 Validando en CajaCopi con tipo: ${paciente.tipoIdentificacionDescripcion.isNotEmpty ? paciente.tipoIdentificacionDescripcion : paciente.tipoIdentificacion}');
 
-        final validacionCajacopi = await CajacopiService.consultarAfiliacion(
-          tipoDocumento:
-              CajacopiService.mapearTipoDocumento(paciente.tipoIdentificacion),
-          numeroDocumento: numeroParaCajacopi,
+        // La nueva firma devuelve ValidacionCajacopi directamente
+        final ValidacionCajacopi validacionCajacopi = await CajacopiService.consultarAfiliacion(
+          tipoDocumento: paciente.tipoIdentificacionDescripcion.isNotEmpty
+              ? paciente.tipoIdentificacionDescripcion
+              : paciente.tipoIdentificacion,
+          numeroDocumento: paciente.cedula.isNotEmpty ? paciente.cedula : numeroDocumento,
         );
 
-        // 3. Actualizar paciente con la validación de CajaCopi
+        // 3. Actualizar paciente con la validación de CajaCopi (modelo ya construido)
         paciente = paciente.copyWith(
-          validacionCajacopi: ValidacionCajacopi.fromJson(validacionCajacopi),
+          validacionCajacopi: validacionCajacopi,
         );
 
         // Si CajaCopi indica que está activo, actualizar el estado de afiliación
-        if (validacionCajacopi['activo'] == true) {
+        if (validacionCajacopi.activo) {
           paciente = paciente.copyWith(afiliacionActiva: true);
         }
       }
@@ -118,7 +82,7 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
         if (paciente != null) {
           _pacienteEncontrado = paciente;
         } else {
-          _errorMessage = 'Cédula no encontrada en el sistema';
+          _errorMessage = 'Documento no encontrado en el sistema';
         }
       });
     } catch (e) {
@@ -140,58 +104,28 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
           mainAxisSize: MainAxisSize.min,
           children: [
             const SizedBox(height: 6),
-            Text('Tipo de documento',
-                style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 6),
-            // Dropdown para seleccionar tipo de documento
-            DropdownButton<String>(
-              value: _selectedTipoDoc,
-              icon: const Icon(Icons.arrow_drop_down),
-              isExpanded: true,
-              underline: Container(height: 1, color: Colors.grey[300]),
-              onChanged: (String? newValue) {
-                setState(() {
-                  _selectedTipoDoc = newValue!;
-                  _errorMessage =
-                      null; // Reiniciar mensaje de error al cambiar tipo
-                  _pacienteEncontrado = null; // Reiniciar paciente encontrado
-                  _idCtrl.clear(); // Limpiar campo de cédula
-                });
-              },
-              items: _documentTypes
-                  .map<DropdownMenuItem<String>>((Map<String, String> value) {
-                return DropdownMenuItem<String>(
-                  value: value['code'],
-                  child: Text(value['label']!),
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 12),
-            Text(_selectedTipoDoc == 'CC' ? 'Cédula' : 'Número de documento',
-                style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 6),
-            // Mostrar campo de entrada o información de cédula consultada
+            // Campo único: Número de identificación
             if (_pacienteEncontrado == null) ...[
-              // Campo normal para escribir
+              // Input antes de la consulta
+              Text(
+                'Número de identificación',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(color: AppColors.text),
+              ),
+              const SizedBox(height: 8),
               TextField(
                 controller: _idCtrl,
-                keyboardType: _tipoDocumentoAceptaSoloNumeros(_selectedTipoDoc)
-                    ? TextInputType.number
-                    : TextInputType.text,
-                inputFormatters:
-                    _tipoDocumentoAceptaSoloNumeros(_selectedTipoDoc)
-                        ? [FilteringTextInputFormatter.digitsOnly]
-                        : null,
+                keyboardType: TextInputType.text, // Permitir letras y números
                 decoration: InputDecoration(
-                  hintText: _tipoDocumentoAceptaSoloNumeros(_selectedTipoDoc)
-                      ? 'Ingrese número (solo dígitos)'
-                      : 'Ingrese número de documento',
+                  hintText: 'Ingrese número de documento',
                   errorText: _errorMessage,
                 ),
                 onSubmitted: (_) => _consultarPaciente(),
               ),
             ] else ...[
-              // Información de cédula consultada (estilo elegante)
+              // Después de la consulta, mostrar el campo en modo solo lectura
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
@@ -202,8 +136,7 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
                       .withOpacity(0.3),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color:
-                        Theme.of(context).colorScheme.primary.withOpacity(0.2),
+                    color: Theme.of(context).colorScheme.primary.withOpacity(0.2),
                   ),
                 ),
                 child: Row(
@@ -229,35 +162,64 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Cédula consultada',
-                            style:
-                                Theme.of(context).textTheme.bodySmall?.copyWith(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            _idCtrl.text,
+                            'Número de identificación',
                             style: Theme.of(context)
                                 .textTheme
-                                .titleMedium
+                                .bodySmall
                                 ?.copyWith(
-                                  color: Theme.of(context).colorScheme.primary,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 16,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                                  fontWeight: FontWeight.w500,
                                 ),
+                          ),
+                          const SizedBox(height: 6),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  _pacienteEncontrado!.cedula,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleMedium
+                                      ?.copyWith(
+                                        color: Theme.of(context).colorScheme.primary,
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 16,
+                                      ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              // Mostrar tipo de documento (sigla) con tooltip que muestra la misma sigla
+                              if (_pacienteEncontrado!.tipoIdentificacionDescripcion.isNotEmpty)
+                                Tooltip(
+                                  message: _pacienteEncontrado!.nombreTipoDocumento,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: Theme.of(context).colorScheme.surface,
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: AppColors.border),
+                                    ),
+                                    child: Text(
+                                      _pacienteEncontrado!.tipoDocumentoCorto.toUpperCase(),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(fontWeight: FontWeight.w700),
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
                         ],
                       ),
                     ),
-                    // Botón pequeño para nueva consulta (opcional)
+                    // Botón para editar el número
                     IconButton(
                       onPressed: () {
                         setState(() {
-                          _idCtrl.clear();
+                          _idCtrl.text = _pacienteEncontrado!.cedula;
                           _pacienteEncontrado = null;
                           _errorMessage = null;
                         });
@@ -267,7 +229,7 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
                         color: Theme.of(context).colorScheme.primary,
                         size: 20,
                       ),
-                      tooltip: 'Cambiar cédula',
+                      tooltip: 'Editar número',
                       style: IconButton.styleFrom(
                         backgroundColor: Theme.of(context)
                             .colorScheme
@@ -348,7 +310,7 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
             Row(
               children: [
                 const Icon(Icons.person, color: AppColors.primary, size: 20),
-                const SizedBox(width: 30),
+                const SizedBox(width: 8),
                 Text('Información del paciente',
                     style: Theme.of(context)
                         .textTheme
@@ -358,20 +320,35 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
             ),
             const SizedBox(height: 12),
             _InfoRow('Nombre completo', paciente.nombreCompleto),
+            _InfoRow('Tipo documento', paciente.nombreTipoDocumento),
             _InfoRow('Edad', '${paciente.edad} años'),
-            _InfoRow(
-              'Estado de afiliación',
-              paciente.afiliacionActiva ? 'Activo en Odoo' : 'Inactivo en Odoo',
-              isStatus: true,
-              isActive: paciente.afiliacionActiva,
-            ),
+            if (paciente.validacionCajacopi != null) ...[
+              _InfoRow(
+                'Estado en Cajacopi',
+                paciente.validacionCajacopi!.estado,
+                isStatus: true,
+                isActive: paciente.validacionCajacopi!.activo,
+              ),
+              if (paciente.validacionCajacopi!.regimen != null &&
+                  paciente.validacionCajacopi!.regimen!.isNotEmpty)
+                _InfoRow('Régimen', paciente.validacionCajacopi!.regimen!),
+            ] else ...[
+              _InfoRow(
+                'Estado de afiliación',
+                paciente.afiliacionActiva ? 'Activo en Odoo' : 'Inactivo en Odoo',
+                isStatus: true,
+                isActive: paciente.afiliacionActiva,
+              ),
+            ],
             _InfoRow(
                 'Último examen',
                 paciente.fechaUltimoExamen != null
                     ? '${paciente.fechaUltimoExamen!.day}/${paciente.fechaUltimoExamen!.month}/${paciente.fechaUltimoExamen!.year}'
                     : 'Sin registro'),
-            _InfoRow('Teléfono', paciente.telefono, isEditable: true),
-            _InfoRow('Correo', paciente.email, isEditable: true),
+            if (paciente.telefono.isNotEmpty)
+              _InfoRow('Teléfono', paciente.telefono, isEditable: true),
+            if (paciente.email.isNotEmpty)
+              _InfoRow('Correo', paciente.email, isEditable: true),
           ],
         ),
       ),
@@ -386,7 +363,7 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 120,
+            width: 130,
             child: Text(label,
                 style: Theme.of(context)
                     .textTheme
@@ -422,7 +399,7 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
                       value,
                       style: Theme.of(context).textTheme.bodyMedium,
                       overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
+                      maxLines: 2,
                     ),
                   ),
                 ],

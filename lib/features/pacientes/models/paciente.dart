@@ -4,115 +4,117 @@ class Paciente {
   final String cedula;
   final String nombreCompleto;
   final int edad;
-  final bool afiliacionActiva;
-  final DateTime? fechaUltimoExamen;
   final String telefono;
   final String email;
-  final EstadoCita? estadoCita;
-  final DateTime? fechaProximaCita;
-
-  // Nueva propiedad para guardar validación de CajaCopi
+  final bool afiliacionActiva;
+  final DateTime? fechaUltimoExamen;
+  final String tipoIdentificacion; // Description de Odoo (CC, TI, PT, etc)
+  final String tipoIdentificacionDescripcion; // Mismo que tipoIdentificacion
+  final String? tipoIdentificacionNombre; // Nombre completo del tipo
   final ValidacionCajacopi? validacionCajacopi;
-  // Nuevo campo: tipo de identificación (CC, TI, PA, etc.)
-  final String tipoIdentificacion;
 
-  const Paciente({
+  Paciente({
     required this.cedula,
     required this.nombreCompleto,
     required this.edad,
+    this.telefono = '',
+    this.email = '',
     required this.afiliacionActiva,
     this.fechaUltimoExamen,
-    required this.telefono,
-    required this.email,
-    this.estadoCita,
-    this.fechaProximaCita,
-    this.validacionCajacopi,
     this.tipoIdentificacion = 'CC',
+    this.tipoIdentificacionDescripcion = 'CC',
+    this.tipoIdentificacionNombre,
+    this.validacionCajacopi,
   });
 
+  /// Verifica si el paciente es apto para agendar
   bool get esAptoParaAgendar {
-    // Primero verificar CajaCopi si está disponible
-    if (validacionCajacopi != null && !validacionCajacopi!.esValido) {
-      return false;
+    // Criterio 1: Edad entre 25 y 49 años
+    if (edad < 25 || edad > 49) return false;
+
+    // Criterio 2: Afiliación activa en Cajacopi (usar validación si existe)
+    if (validacionCajacopi != null) {
+      if (!validacionCajacopi!.esValido) return false;
+    } else {
+      // Si no hay validación de Cajacopi, usar el estado de Odoo
+      if (!afiliacionActiva) return false;
     }
 
-    // Validaciones originales
-    if (!afiliacionActiva) return false;
-    if (edad < 25 || edad > 49) return false;
+    // Criterio 3: Último examen hace 2 años o más
     if (fechaUltimoExamen != null) {
       final diferencia = DateTime.now().difference(fechaUltimoExamen!);
-      if (diferencia.inDays < 365) return false; // Cambié a 1 año según el PDF
+      if (diferencia.inDays < 730) return false; // Menos de 2 años
     }
-    return estadoCita == null || estadoCita == EstadoCita.cancelado;
+
+    return true;
   }
 
+  /// Obtiene el motivo por el cual no es apto
   String get motivoNoApto {
-    // Verificar primero CajaCopi
+    if (edad < 25 || edad > 49) {
+      return 'La paciente debe tener entre 25 y 49 años. Edad actual: $edad años';
+    }
+
     if (validacionCajacopi != null) {
-      if (!validacionCajacopi!.existe) {
-        return 'No se encontró afiliación en Cajacopi EPS';
+      if (!validacionCajacopi!.esValido) {
+        return validacionCajacopi!.mensaje;
       }
-      if (!validacionCajacopi!.activo) {
-        return 'El paciente no tiene afiliación activa en Cajacopi (Estado: ${validacionCajacopi!.estado})';
+    } else if (!afiliacionActiva) {
+      return 'La paciente debe estar afiliada activa en Cajacopi EPS';
+    }
+
+    if (fechaUltimoExamen != null) {
+      final diferencia = DateTime.now().difference(fechaUltimoExamen!);
+      if (diferencia.inDays < 730) {
+        return 'El último examen fue hace menos de 2 años';
       }
     }
 
-    // Validaciones originales
-    if (!afiliacionActiva) return 'No cuenta con afiliación activa';
-    if (edad < 25)
-      return 'Está fuera del rango de edad permitido (menor a 25 años)';
-    if (edad > 49)
-      return 'Está fuera del rango de edad permitido (mayor a 49 años)';
-    if (fechaUltimoExamen != null) {
-      final diferencia = DateTime.now().difference(fechaUltimoExamen!);
-      if (diferencia.inDays < 365) {
-        final meses = (diferencia.inDays / 30).round();
-        return 'Ya se hizo el examen hace $meses meses';
-      }
+    return 'No cumple con los criterios de elegibilidad';
+  }
+
+  /// Obtiene el nombre completo del tipo de documento o un valor por defecto
+  String get nombreTipoDocumento {
+    if (tipoIdentificacionNombre != null && tipoIdentificacionNombre!.isNotEmpty) {
+      return tipoIdentificacionNombre!;
     }
-    if (estadoCita != null && estadoCita != EstadoCita.cancelado) {
-      return 'Cuenta con una cita en estado: ${estadoCita!.nombre}';
-    }
+    // Si no tenemos el nombre, retornar el código
+    return tipoIdentificacion;
+  }
+
+  /// Obtiene la forma corta (sigla/description) para mostrar en la UI
+  String get tipoDocumentoCorto {
+    if (tipoIdentificacionDescripcion.isNotEmpty) return tipoIdentificacionDescripcion;
+    if (tipoIdentificacion.isNotEmpty) return tipoIdentificacion;
     return '';
   }
 
-  // Método para copiar con nuevos valores
+  /// Crea una copia del paciente con valores actualizados
   Paciente copyWith({
     String? cedula,
     String? nombreCompleto,
     int? edad,
-    bool? afiliacionActiva,
-    DateTime? fechaUltimoExamen,
     String? telefono,
     String? email,
-    EstadoCita? estadoCita,
-    DateTime? fechaProximaCita,
-    ValidacionCajacopi? validacionCajacopi,
+    bool? afiliacionActiva,
+    DateTime? fechaUltimoExamen,
     String? tipoIdentificacion,
+    String? tipoIdentificacionDescripcion,
+    String? tipoIdentificacionNombre,
+    ValidacionCajacopi? validacionCajacopi,
   }) {
     return Paciente(
       cedula: cedula ?? this.cedula,
       nombreCompleto: nombreCompleto ?? this.nombreCompleto,
       edad: edad ?? this.edad,
-      afiliacionActiva: afiliacionActiva ?? this.afiliacionActiva,
-      fechaUltimoExamen: fechaUltimoExamen ?? this.fechaUltimoExamen,
       telefono: telefono ?? this.telefono,
       email: email ?? this.email,
-      estadoCita: estadoCita ?? this.estadoCita,
-      fechaProximaCita: fechaProximaCita ?? this.fechaProximaCita,
-      validacionCajacopi: validacionCajacopi ?? this.validacionCajacopi,
+      afiliacionActiva: afiliacionActiva ?? this.afiliacionActiva,
+      fechaUltimoExamen: fechaUltimoExamen ?? this.fechaUltimoExamen,
       tipoIdentificacion: tipoIdentificacion ?? this.tipoIdentificacion,
+      tipoIdentificacionDescripcion: tipoIdentificacionDescripcion ?? this.tipoIdentificacionDescripcion,
+      tipoIdentificacionNombre: tipoIdentificacionNombre ?? this.tipoIdentificacionNombre,
+      validacionCajacopi: validacionCajacopi ?? this.validacionCajacopi,
     );
   }
-}
-
-enum EstadoCita {
-  preAgenda('Pre-agenda'),
-  agenda('Agenda'),
-  listo('Listo'),
-  cancelado('Cancelado'),
-  ninguno('Ninguno');
-
-  const EstadoCita(this.nombre);
-  final String nombre;
 }

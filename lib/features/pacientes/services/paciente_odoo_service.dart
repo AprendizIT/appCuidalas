@@ -4,12 +4,17 @@ import '../../../core/services/odoo_service.dart';
 import '../models/paciente.dart';
 
 class PacienteOdooService {
-  /// Busca un paciente por cédula en el modelo hms.patient
-  /// tipoDocumento: código abreviado (CC, TI, PA, etc.) utilizado para
-  /// ajustar la estrategia de búsqueda (igualdad para numéricos, ilike para alfanuméricos)
-  static Future<Paciente?> buscarPorCedula(String cedula, {String tipoDocumento = 'CC'}) async {
+  // Normaliza valores que pueden venir de Odoo (evita 'false' o valores no deseados)
+  static String _normalizeDescription(dynamic v) {
+    if (v == null) return '';
+    if (v is bool) return '';
+    final s = v.toString();
+    return s.trim();
+  }
+  /// Busca un paciente por número de documento en el modelo hms.patient
+  static Future<Paciente?> buscarPorDocumento(String numeroDocumento) async {
     try {
-      print('🔍 Buscando paciente con cédula: $cedula (tipo: $tipoDocumento)');
+      print('🔍 Buscando paciente con documento: $numeroDocumento');
 
       // Asegurar conexión
       if (!OdooService.isConnected) {
@@ -22,8 +27,9 @@ class PacienteOdooService {
         print('✅ Conexión establecida');
       }
 
-      final cedulaTrim = cedula.trim();
-      final digitsOnly = cedulaTrim.replaceAll(RegExp(r'\D'), '');
+      final documentoTrim = numeroDocumento.trim();
+      
+      // Campos a obtener, incluyendo el description del tipo de documento
       final fields = [
         'id',
         'name',
@@ -35,104 +41,81 @@ class PacienteOdooService {
         'l10n_latam_identification_type_id',
       ];
 
-      // Construir dominio según tipo de documento
-      final domainAttempts = <List<dynamic>>[];
-      final tipoUpper = tipoDocumento.toUpperCase();
+      // Buscar con ilike para ser más flexible con el formato
+      print('🔎 Buscando con vat ilike: $documentoTrim');
+      
+      List<dynamic> results = await OdooService.searchRead(
+        'hms.patient',
+        domain: [
+          ['vat', 'ilike', documentoTrim]
+        ],
+        fields: fields,
+        limit: 10,
+      );
 
-      // Para tipos numéricos hacemos búsqueda de igualdad sobre vat (trimmed digits)
-      final numericTypes = {'CC', 'TI', 'RC', 'NIT', 'CE'};
-      if (numericTypes.contains(tipoUpper)) {
-        if (digitsOnly.isEmpty) {
-          print('⚠️ Cédula no contiene dígitos: $cedulaTrim');
-          return null;
-        }
-        domainAttempts.add([
-          ['vat', '=', digitsOnly]
-        ]);
-      } else {
-        // Para tipos alfanuméricos (pasaporte etc) usar ilike con el valor completo
-        domainAttempts.add([
-          ['vat', 'ilike', cedulaTrim]
-        ]);
-      }
+      print('📊 Resultados encontrados: ${results.length}');
 
-      // Deduplicate domains
-      final seen = <String>{};
-      final dedupedDomains = <List<dynamic>>[];
-      for (final d in domainAttempts) {
-        try {
-          final key = jsonEncode(d);
-          if (!seen.contains(key)) {
-            seen.add(key);
-            dedupedDomains.add(d);
-          }
-        } catch (_) {
-          dedupedDomains.add(d);
-        }
-      }
-
-      List<dynamic> results = [];
-      for (final domain in dedupedDomains) {
-        print('🔎 Intentando dominio: $domain');
-        try {
-          results = await OdooService.searchRead(
-            'hms.patient',
-            domain: domain,
-            fields: fields,
-            limit: 1,
-          );
-        } catch (e) {
-          print('⚠️ Error al consultar con dominio $domain: $e');
-          results = [];
-        }
-
-        print('📊 Resultados para dominio $domain: ${results.length}');
-        if (results.isNotEmpty) {
-          print('🟢 Datos crudos Odoo: ${results.toString()}');
-          break;
-        }
-      }
-
-      // Fallback seguro para tipos numéricos: si no encontramos con '='
-      // intentamos una búsqueda 'ilike' y luego filtramos localmente por igualdad
-      // de los dígitos, esto permite manejar formatos con guiones/puntos.
-      if (results.isEmpty && numericTypes.contains(tipoUpper)) {
-        try {
-          print('🔁 Intentando fallback ilike + filtrado local para: $digitsOnly');
-          final alt = await OdooService.searchRead(
-            'hms.patient',
-            domain: [
-              ['vat', 'ilike', digitsOnly]
-            ],
-            fields: fields,
-            limit: 10,
-          );
-
-          final filtered = alt.where((record) {
-            final vatRaw = (record['vat'] ?? '').toString();
-            final vatDigits = vatRaw.replaceAll(RegExp(r'\D'), '');
-            return vatDigits == digitsOnly;
-          }).toList();
-
-          if (filtered.isNotEmpty) {
-            results = [filtered.first];
-            print('🟢 Fallback produjo ${filtered.length} coincidencias, usando la primera');
-          } else {
-            print('⚪ Fallback no encontró coincidencias exactas tras filtrar por dígitos');
-          }
-        } catch (e) {
-          print('⚠️ Error en fallback ilike: $e');
-        }
+      // Si no encuentra con ilike, intentar búsqueda exacta
+      if (results.isEmpty) {
+        print('🔎 Intentando búsqueda exacta con vat =: $documentoTrim');
+        results = await OdooService.searchRead(
+          'hms.patient',
+          domain: [
+            ['vat', '=', documentoTrim]
+          ],
+          fields: fields,
+          limit: 1,
+        );
+        print('📊 Resultados con búsqueda exacta: ${results.length}');
       }
 
       if (results.isEmpty) {
-        print('❌ No se encontró paciente con cédula: $cedula (todos los intentos)');
+        print('❌ No se encontró paciente con documento: $numeroDocumento');
         return null;
       }
 
       final data = results.first as Map<String, dynamic>;
-      final paciente = _mapearPacienteDesdeOdoo(data);
-      print('✅ Paciente encontrado: ${paciente.nombreCompleto}');
+      
+      // Ahora necesitamos obtener el description del tipo de documento
+      // usando la notación de punto como en Odoo Python
+      String tipoDocumentoDescription = ''; // Default vacío -> no mostrar si no existe
+      String tipoDocumentoNombre = '';
+      
+      if (data['l10n_latam_identification_type_id'] != null) {
+        final tipoField = data['l10n_latam_identification_type_id'];
+        
+        // El campo viene como [id, "name"]
+        if (tipoField is List && tipoField.length > 1) {
+          final tipoId = tipoField[0];
+          tipoDocumentoNombre = tipoField[1].toString();
+          
+          // Ahora obtenemos el description del tipo de documento
+          try {
+            final tipoDocResults = await OdooService.searchRead(
+              'l10n_latam.identification.type',
+              domain: [['id', '=', tipoId]],
+              fields: ['id', 'name', 'description'],
+              limit: 1,
+            );
+            
+            if (tipoDocResults.isNotEmpty) {
+              final tipoDocData = tipoDocResults.first as Map<String, dynamic>;
+              // Normalizar: evitar 'false' si el campo viene como boolean
+              tipoDocumentoDescription = _normalizeDescription(tipoDocData['description'] ?? tipoDocData['l10n_co_document_code'] ?? tipoDocData['code']);
+              if (tipoDocumentoDescription.isEmpty) tipoDocumentoDescription = '';
+              print('📄 Tipo documento description obtenido: $tipoDocumentoDescription');
+            }
+          } catch (e) {
+            print('⚠️ No se pudo obtener el description del tipo de documento: $e');
+          }
+        }
+      }
+      
+      print('✅ Paciente encontrado');
+      print('   Tipo documento description: $tipoDocumentoDescription');
+      print('   Tipo documento nombre: $tipoDocumentoNombre');
+      
+      final paciente = _mapearPacienteDesdeOdoo(data, tipoDocumentoDescription, tipoDocumentoNombre);
       return paciente;
     } catch (e) {
       print('💥 Error buscando paciente: $e');
@@ -141,7 +124,11 @@ class PacienteOdooService {
   }
 
   /// Mapea datos de Odoo al modelo Paciente local
-  static Paciente _mapearPacienteDesdeOdoo(Map<String, dynamic> data) {
+  static Paciente _mapearPacienteDesdeOdoo(
+    Map<String, dynamic> data, 
+    String tipoDocumentoDescription,
+    String tipoDocumentoNombre
+  ) {
     // Validar EPS para determinar afiliación activa
     bool afiliacionActiva = false;
     final eps = data['eps'];
@@ -160,16 +147,6 @@ class PacienteOdooService {
       }
     }
 
-    // Extraer tipo de identificación
-    String tipoIdentificacion = 'CC';
-    if (data['l10n_latam_identification_type_id'] != null) {
-      final tipoField = data['l10n_latam_identification_type_id'];
-      if (tipoField is List && tipoField.length > 1) {
-        final tipoDesc = tipoField[1].toString();
-        tipoIdentificacion = _mapearTipoDocumento(tipoDesc);
-      }
-    }
-
     final cedula = data['vat']?.toString() ?? '';
     final nombre = data['name']?.toString() ?? '';
     final telefono = data['mobile']?.toString() ?? '';
@@ -183,26 +160,10 @@ class PacienteOdooService {
       email: email,
       afiliacionActiva: afiliacionActiva,
       fechaUltimoExamen: null,
-      tipoIdentificacion: tipoIdentificacion,
+      tipoIdentificacion: tipoDocumentoDescription,
+      tipoIdentificacionDescripcion: tipoDocumentoDescription,
+      tipoIdentificacionNombre: tipoDocumentoNombre.isNotEmpty ? tipoDocumentoNombre : null,
     );
-  }
-
-  /// Mapea el tipo de documento de Odoo al formato esperado por CajaCopi
-  static String _mapearTipoDocumento(String tipoOdoo) {
-    final tipo = tipoOdoo.toUpperCase();
-
-    if (tipo.contains('CÉDULA') || tipo.contains('CEDULA') || tipo.contains('CC')) return 'CC';
-    if (tipo.contains('TARJETA') || tipo.contains('IDENTIDAD') || tipo.contains('TI')) return 'TI';
-    if (tipo.contains('REGISTRO') || tipo.contains('CIVIL') || tipo.contains('RC')) return 'RC';
-    if (tipo.contains('PASAPORTE') || tipo.contains('PA')) return 'PA';
-    if (tipo.contains('EXTRANJERÍA') || tipo.contains('EXTRANJERIA') || tipo.contains('CE')) return 'CE';
-    if (tipo.contains('NIT')) return 'NIT';
-
-    final siglas = tipo.replaceAll(RegExp(r'[^A-Z]'), '');
-    if (siglas.isNotEmpty && siglas.length <= 3) return siglas;
-
-    print('⚠️ Tipo de documento no reconocido: $tipoOdoo, usando CC por defecto');
-    return 'CC';
   }
 
   /// Busca pacientes con filtros múltiples
@@ -241,7 +202,46 @@ class PacienteOdooService {
         offset: offset,
       );
 
-      return results.map((data) => _mapearPacienteDesdeOdoo(data as Map<String, dynamic>)).toList();
+      // Para cada resultado, obtener el tipo de documento
+      // Para cada resultado, obtener el tipo de documento
+       final pacientes = <Paciente>[];
+       for (final data in results) {
+        String tipoDescription = '';
+        String tipoNombre = '';
+        
+        if (data['l10n_latam_identification_type_id'] != null) {
+          final tipoField = data['l10n_latam_identification_type_id'];
+          if (tipoField is List && tipoField.length > 1) {
+            final tipoId = tipoField[0];
+            tipoNombre = tipoField[1].toString();
+            
+            try {
+              final tipoDocResults = await OdooService.searchRead(
+                'l10n_latam.identification.type',
+                domain: [['id', '=', tipoId]],
+                fields: ['id', 'l10n_co_document_code'],
+                limit: 1,
+              );
+              
+              if (tipoDocResults.isNotEmpty) {
+                final tipoDocData = tipoDocResults.first as Map<String, dynamic>;
+                tipoDescription = _normalizeDescription(tipoDocData['l10n_co_document_code']);
+                if (tipoDescription.isEmpty) tipoDescription = '';
+              }
+            } catch (e) {
+              print('⚠️ Error obteniendo tipo de documento: $e');
+            }
+          }
+        }
+        
+        pacientes.add(_mapearPacienteDesdeOdoo(
+          data as Map<String, dynamic>, 
+          tipoDescription, 
+          tipoNombre
+        ));
+      }
+
+      return pacientes;
     } catch (e) {
       print('Error buscando pacientes: $e');
       return [];
@@ -259,29 +259,6 @@ class PacienteOdooService {
     } catch (e) {
       print('Error contando pacientes: $e');
       return 0;
-    }
-  }
-
-  /// DEBUG: obtener algunos registros de hms.patient para inspeccionar estructura de campos
-  static Future<void> debugMuestraRegistros() async {
-    try {
-      print('🛠️ Iniciando debug de registros en hms.patient');
-
-      final sample = await OdooService.searchRead(
-        'hms.patient',
-        domain: [],
-        fields: ['id', 'name', 'vat', 'l10n_latam_identification_type_id'],
-        limit: 5,
-      );
-      print('🧾 Muestra de hms.patient (5): ${sample.toString()}');
-
-      for (var record in sample) {
-        if (record['l10n_latam_identification_type_id'] != null) {
-          print('🆔 Tipo ID para ${record['name']}: ${record['l10n_latam_identification_type_id']}');
-        }
-      }
-    } catch (e) {
-      print('⚠️ No se pudo obtener muestra de hms.patient: $e');
     }
   }
 }

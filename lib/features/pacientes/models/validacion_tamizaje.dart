@@ -17,13 +17,23 @@ class ValidacionCajacopi {
   });
 
   factory ValidacionCajacopi.fromJson(Map<String, dynamic> json) {
+    final rawEstado = (json['estado'] ?? 'DESCONOCIDO').toString();
+    final estadoNormalizado = rawEstado.toUpperCase().trim();
+
+    final activo = (json['activo'] ?? false) || (estadoNormalizado == 'ACTIVO');
+
+    final mensajeFromJson = json['mensaje']?.toString();
+    final mensaje = mensajeFromJson != null && mensajeFromJson.isNotEmpty
+        ? mensajeFromJson
+        : _mensajeDesdeEstado(estadoNormalizado);
+
     return ValidacionCajacopi(
       existe: json['existe'] ?? false,
-      estado: json['estado'] ?? 'DESCONOCIDO',
-      regimen: json['regimen'],
-      activo: json['activo'] ?? false,
-      mensaje: json['mensaje'] ?? '',
-      datosCompletos: json['datos'],
+      estado: estadoNormalizado,
+      regimen: json['regimen']?.toString(),
+      activo: activo,
+      mensaje: mensaje,
+      datosCompletos: json['datos'] as Map<String, dynamic>?,
     );
   }
 
@@ -48,6 +58,25 @@ class ValidacionCajacopi {
   }
 
   bool get esValido => existe && activo;
+
+  static String _mensajeDesdeEstado(String estado) {
+    switch (estado.toUpperCase()) {
+      case 'ACTIVO':
+        return 'Afiliación activa en Cajacopi EPS';
+      case 'INACTIVO':
+        return 'El usuario no se encuentra activo en Cajacopi EPS';
+      case 'SUSPENDIDO':
+        return 'La afiliación se encuentra suspendida';
+      case 'RETIRADO':
+        return 'El usuario está retirado de Cajacopi EPS';
+      case 'NO EXISTE':
+        return 'El usuario no existe en la base de datos';
+      case 'ERROR':
+        return 'Error al validar el estado de afiliación';
+      default:
+        return 'Estado de afiliación: $estado';
+    }
+  }
 }
 
 /// Resultado completo de validación de tamizaje
