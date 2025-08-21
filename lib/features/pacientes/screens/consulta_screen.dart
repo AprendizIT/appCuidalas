@@ -80,20 +80,27 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
 
       setState(() {
         _consultando = false;
-        if (paciente != null) {
-          _pacienteEncontrado = paciente;
-          
-          // 📊 Registrar consulta en analytics
+        // No asignamos _pacienteEncontrado aquí para que la UI principal no cambie;
+        // los resultados se mostrarán únicamente en el diálogo.
+        if (paciente == null) {
+          _errorMessage = 'Documento no encontrado en el sistema';
+        } else {
+          // 📊 Registrar consulta en analytics sin mutar la UI principal
           final analytics = ConsultasAnalyticsService();
           if (paciente.esAptoParaAgendar) {
             analytics.registrarConsultaApta();
           } else {
             analytics.registrarConsultaNoApta();
           }
-        } else {
-          _errorMessage = 'Documento no encontrado en el sistema';
         }
       });
+
+      // Si se encontró paciente, mostrar los resultados en un diálogo modal
+      if (paciente != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _showResultadosPopup(paciente!);
+        });
+      }
     } catch (e) {
       setState(() {
         _consultando = false;
@@ -101,6 +108,59 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
       });
       print('Error en consulta: $e');
     }
+  }
+
+  // Muestra un diálogo con la información y controles de la consulta
+  void _showResultadosPopup(Paciente paciente) {
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return Dialog(
+          backgroundColor: Colors.white,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Icon(Icons.person, color: AppColors.primary, size: 20),
+                      const SizedBox(width: 8),
+                      Text('Información del paciente',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(color: AppColors.primary)),
+                      IconButton(
+                        onPressed: () {
+                          setState(() {
+                            _idCtrl.clear();
+                            _pacienteEncontrado = null;
+                            _errorMessage = null;
+                          });
+                          Navigator.of(context).pop();
+                        },
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  _buildPacienteInfo(paciente),
+                  const SizedBox(height: 12),
+                  _buildEstadoValidacion(paciente, cerrarDialogo: true),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   @override
@@ -316,18 +376,6 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                const Icon(Icons.person, color: AppColors.primary, size: 20),
-                const SizedBox(width: 8),
-                Text('Información del paciente',
-                    style: Theme.of(context)
-                        .textTheme
-                        .titleMedium
-                        ?.copyWith(color: AppColors.primary)),
-              ],
-            ),
-            const SizedBox(height: 12),
             _InfoRow('Nombre completo', paciente.nombreCompleto),
             _InfoRow('Tipo documento', paciente.nombreTipoDocumento),
             _InfoRow('Edad', '${paciente.edad} años'),
@@ -434,7 +482,7 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
     );
   }
 
-  Widget _buildEstadoValidacion(Paciente paciente) {
+  Widget _buildEstadoValidacion(Paciente paciente, {bool cerrarDialogo = false}) {
     final esApto = paciente.esAptoParaAgendar;
     final motivo = paciente.motivoNoApto;
 
@@ -445,8 +493,7 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: () =>
-                  Navigator.pushNamed(context, AppConsts.routeAgendar),
+              onPressed: () => Navigator.pushNamed(context, AppConsts.routeAgendar),
               icon: const Icon(Icons.calendar_today),
               label: const Text('Agendar cita'),
               style: ElevatedButton.styleFrom(
@@ -501,6 +548,9 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
           width: double.infinity,
           child: OutlinedButton.icon(
             onPressed: () {
+              // Cerrar diálogo si viene desde el modal
+              if (cerrarDialogo) Navigator.of(context).pop();
+
               setState(() {
                 _idCtrl.clear();
                 _pacienteEncontrado = null;

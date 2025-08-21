@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 class AppColors {
-  static const Color primary = Color(0xFFF06A83); // rosado suave
+  static const Color primary = Color.fromARGB(255, 225, 98, 122); // rosado suave
   static const Color onPrimary = Colors.white;
 
   static const Color bg = Color(0xFFF6F7F9); // gris muy claro de fondo

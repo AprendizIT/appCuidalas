@@ -3,19 +3,96 @@ import 'package:fl_chart/fl_chart.dart';
 import '../../../core/theme/app_theme.dart';
 import '../services/consultas_analytics_service.dart';
 
-class ConsultasChartWidget extends StatelessWidget {
+class ConsultasChartWidget extends StatefulWidget {
   const ConsultasChartWidget({super.key});
 
   @override
+  State<ConsultasChartWidget> createState() => _ConsultasChartWidgetState();
+}
+
+class _ConsultasChartWidgetState extends State<ConsultasChartWidget>
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+  late final ConsultasAnalyticsService _analytics;
+  late final AnimationController _ctrl;
+  late final Animation<double> _curve;
+
+  @override
+  void initState() {
+    super.initState();
+    // Escuchar cambios de ciclo de vida para re-animar al volver a la app
+    WidgetsBinding.instance.addObserver(this);
+    _analytics = ConsultasAnalyticsService();
+    _analytics.addListener(_onAnalyticsUpdated);
+
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    );
+
+    // Curved animation para suavizar la interpolación y evitar "saltos" al final
+    _curve = CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic);
+
+    // Si ya hay datos, arrancar la animación después del primer frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_analytics.totalConsultas > 0) _runAnimation();
+    });
+  }
+
+  void _onAnalyticsUpdated() {
+    // Reiniciar animación cuando cambian los datos
+    if (!mounted) return;
+    if (_analytics.totalConsultas == 0) {
+      _ctrl.value = 0.0;
+      setState(() {});
+      return;
+    }
+    _runAnimation();
+  }
+
+  void _runAnimation() {
+    _ctrl
+      ..stop()
+      ..value = 0.0
+      ..forward();
+  }
+
+  @override
+  void dispose() {
+    _analytics.removeListener(_onAnalyticsUpdated);
+    WidgetsBinding.instance.removeObserver(this);
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      // Al volver a la app, re-ejecutar la animación si hay datos
+      if (mounted && _analytics.totalConsultas > 0) {
+        _runAnimation();
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: ConsultasAnalyticsService(),
+    if (_analytics.totalConsultas == 0) return _buildEmptyState(context);
+
+    return AnimatedBuilder(
+      animation: _curve,
       builder: (context, child) {
-        final analytics = ConsultasAnalyticsService();
-        
-        if (analytics.totalConsultas == 0) {
-          return _buildEmptyState(context);
-        }
+        final progress = _curve.value; // ya aplica easeOutCubic
+
+        final targetAptas = _analytics.consultasAptas.toDouble();
+        final targetNoAptas = _analytics.consultasNoAptas.toDouble();
+
+        final animAptas = targetAptas * progress;
+        final animNoAptas = targetNoAptas * progress;
+        final animTotal = animAptas + animNoAptas;
+
+        final displayPctAptos = animTotal == 0 ? 0.0 : (animAptas / animTotal) * 100;
+        final displayPctNoAptos = animTotal == 0 ? 0.0 : (animNoAptas / animTotal) * 100;
 
         return Column(
           children: [
@@ -29,10 +106,8 @@ class ConsultasChartWidget extends StatelessWidget {
                   sections: [
                     PieChartSectionData(
                       color: AppColors.primary,
-                      value: analytics.consultasAptas.toDouble(),
-                      title: analytics.porcentajeAptos > 8 
-                          ? '${analytics.porcentajeAptos.toStringAsFixed(0)}%' 
-                          : '',
+                      value: animAptas,
+                      title: displayPctAptos > 8 ? '${displayPctAptos.toStringAsFixed(0)}%' : '',
                       titleStyle: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.bold,
@@ -42,10 +117,8 @@ class ConsultasChartWidget extends StatelessWidget {
                     ),
                     PieChartSectionData(
                       color: AppColors.textSecondary,
-                      value: analytics.consultasNoAptas.toDouble(),
-                      title: analytics.porcentajeNoAptos > 8 
-                          ? '${analytics.porcentajeNoAptos.toStringAsFixed(0)}%' 
-                          : '',
+                      value: animNoAptas,
+                      title: displayPctNoAptos > 8 ? '${displayPctNoAptos.toStringAsFixed(0)}%' : '',
                       titleStyle: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.bold,
@@ -53,12 +126,24 @@ class ConsultasChartWidget extends StatelessWidget {
                       ),
                       radius: 50,
                     ),
+                    // Filler section para animar el llenado del gráfico desde 0 hasta el total
+                    PieChartSectionData(
+                      color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.6),
+                      value: ( (targetAptas + targetNoAptas) - (animAptas + animNoAptas) ).clamp(0.0, (targetAptas + targetNoAptas)),
+                      title: '',
+                      radius: 50,
+                      showTitle: false,
+                    ),
                   ],
                 ),
+                // Desactivar la animación interna del paquete para confiar
+                // únicamente en nuestra AnimationController y evitar dobles interpolaciones
+                swapAnimationDuration: Duration.zero,
+                swapAnimationCurve: Curves.linear,
               ),
             ),
             const SizedBox(height: 16),
-            _buildLegend(context, analytics),
+            _buildLegend(context, _analytics),
             const SizedBox(height: 12),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -67,7 +152,7 @@ class ConsultasChartWidget extends StatelessWidget {
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Text(
-                'Total: ${analytics.totalConsultas}',
+                'Total: ${animTotal.round()}',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                   fontWeight: FontWeight.w600,
