@@ -9,6 +9,7 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.2
   odoo_rpc: ^0.7.1
+  fl_chart: ^0.66.2
 dev_dependencies:
   flutter_test:
     sdk: flutter

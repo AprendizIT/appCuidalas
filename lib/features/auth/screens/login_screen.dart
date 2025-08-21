@@ -33,7 +33,7 @@ class _LoginScreenState extends State<LoginScreen> {
         padding: const EdgeInsets.all(AppConsts.spacingXL),
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Row(
               children: [
@@ -56,11 +56,8 @@ class _LoginScreenState extends State<LoginScreen> {
               ],
             ),
             const SizedBox(height: 18),
-            Text('Bienvenida',
+            Text('Iniciar Sesión',
                 style: Theme.of(context).textTheme.displayMedium),
-            const SizedBox(height: 6),
-            Text('Inicia sesión para continuar',
-                style: Theme.of(context).textTheme.bodyMedium),
             const SizedBox(height: 20),
             Form(
               key: _formKey,

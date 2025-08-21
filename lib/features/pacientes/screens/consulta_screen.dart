@@ -7,6 +7,7 @@ import '../models/paciente.dart';
 import '../services/paciente_odoo_service.dart';
 import '../services/cajacopi_service.dart';
 import '../models/validacion_tamizaje.dart';
+import '../../dashboard/services/consultas_analytics_service.dart';
 
 class ConsultaWidget extends StatefulWidget {
   const ConsultaWidget({super.key});
@@ -81,6 +82,14 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
         _consultando = false;
         if (paciente != null) {
           _pacienteEncontrado = paciente;
+          
+          // 📊 Registrar consulta en analytics
+          final analytics = ConsultasAnalyticsService();
+          if (paciente.esAptoParaAgendar) {
+            analytics.registrarConsultaApta();
+          } else {
+            analytics.registrarConsultaNoApta();
+          }
         } else {
           _errorMessage = 'Documento no encontrado en el sistema';
         }
@@ -247,8 +256,8 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
               const ConsultaResultados(
                 criterios: [
                   'Edad entre 25 a 49 años',
-                  'Afiliada activa en Cajacopi EPS',
-                  'Último examen hace 2 años o más',
+                  'Afiliación activa en Cajacopi EPS',
+                  'Último examen hace más de 1 año (O nunca lo ha tenido)',
                 ],
               ),
             if (_pacienteEncontrado != null) ...[
