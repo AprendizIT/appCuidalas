@@ -49,11 +49,11 @@ class ConsultasAnalyticsService extends ChangeNotifier {
 
   // Método para inicializar con datos de ejemplo (para testing)
   void inicializarConDatosEjemplo() {
-    _consultasAptas = 15;
-    _consultasNoAptas = 5;
+    _consultasAptas = 89; // Consultas que resultaron aptas
+    _consultasNoAptas = 23; // Consultas que no fueron aptas
     notifyListeners();
     if (kDebugMode) {
-      print('📊 Datos de ejemplo cargados: $_consultasAptas aptas, $_consultasNoAptas no aptas');
+      print('📊 Datos de ejemplo cargados: $_consultasAptas aptas, $_consultasNoAptas no aptas (${porcentajeAptos.toStringAsFixed(1)}% de éxito)');
     }
   }
 }

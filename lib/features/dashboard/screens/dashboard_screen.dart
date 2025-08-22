@@ -5,6 +5,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../pacientes/screens/consulta_screen.dart';
 import '../widgets/stats_card.dart';
 import '../services/consultas_analytics_service.dart';
+import '../services/pacientes_analytics_service.dart';
 
 class DashboardScreen extends StatefulWidget {
   final bool openConsulta;
@@ -23,6 +24,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     
     // Inicializar con datos de ejemplo para demostración
     ConsultasAnalyticsService().inicializarConDatosEjemplo();
+    PacientesAnalyticsService().inicializarConDatosEjemplo();
     
     if (widget.openConsulta) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _showConsultaIfNeeded());
