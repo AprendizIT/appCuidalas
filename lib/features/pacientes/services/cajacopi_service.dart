@@ -1,14 +1,9 @@
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+import '../../../core/services/odoo_service.dart'; // Asegúrate de que la ruta sea correcta.
 import '../models/validacion_tamizaje.dart';
 
 /// Servicio para consultar el estado de afiliación en Cajacopi EPS
 class CajacopiService {
-  static const String _baseUrl =
-      'https://genesis.cajacopieps.com/php/consultaAfiliados/obtenerafiliadoips.php';
-
-  /// Consulta el estado de afiliación de un paciente
-  /// Retorna un mapa con el estado y los datos del afiliado
   static Future<ValidacionCajacopi> consultarAfiliacion({
     required String tipoDocumento,
     required String numeroDocumento,
@@ -18,56 +13,59 @@ class CajacopiService {
       print('   Tipo documento: $tipoDocumento');
       print('   Número documento: $numeroDocumento');
 
-      final response = await http.post(
-        Uri.parse(_baseUrl),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: jsonEncode({
-          'tipodocumento': tipoDocumento,
-          'documento': numeroDocumento,
-          'function': 'obtenerafiliados',
-        }),
-      );
+      // Llamada al método de Odoo
+      final result = await OdooService.client.callKw({
+        'model': 'hms.appointment', // Modelo relevante de Odoo
+        'method': 'get_status_afiliacion_result', // Método a invocar en Odoo
+        'args': [
+          [], // Lista vacía de IDs porque no necesitamos un registro específico
+          tipoDocumento, 
+          numeroDocumento
+        ],
+        'kwargs': {}
+      });
 
-      if (response.statusCode == 200) {
-        final result = jsonDecode(response.body);
-        
-        print('📋 Respuesta de Cajacopi: ${result.toString()}');
+      // Procesar la respuesta de Odoo
+      final estado = result[0]; // Estado retornado por Odoo
+      final datosAfiliado = result[1]; // Datos completos del afiliado
 
-        // Verificar si el afiliado no existe
-        if (result['CODIGO']?.toString() == '1') {
-          print('❌ Afiliado no existe en Cajacopi');
-          return ValidacionCajacopi.noExiste();
-        }
-
-        // Extraer información del afiliado
-        final estado = result['ESTADO'] ?? 'DESCONOCIDO';
-        final regimen = result['REGIMEN'] ?? '';
-
-        print('✅ Afiliado encontrado:');
-        print('   Estado: $estado');
-        print('   Régimen: $regimen');
-
-        final map = {
-          'existe': true,
-          'estado': estado,
-          'regimen': regimen,
-          'activo': estado == 'ACTIVO',
-          'datos': result,
-          'mensaje': null,
-        };
-        return ValidacionCajacopi.fromJson(map);
-      } else {
-        print('❌ Error en la consulta: ${response.statusCode}');
-        return ValidacionCajacopi.error('Error HTTP ${response.statusCode}');
+      if (estado == "ERROR") {
+        print('❌ Error: No se pudo validar el estado de afiliación');
+        return ValidacionCajacopi.error("No se pudo validar el estado de afiliación");
       }
+
+      // Si el afiliado no existe, retorna el estado 'No Existe'
+      if (estado == "NO EXISTE") {
+        print('❌ Afiliado no existe');
+        return ValidacionCajacopi.noExiste();
+      }
+
+      // Validar que datosAfiliado no sea nulo o vacío antes de acceder a sus campos
+      if (datosAfiliado == null || datosAfiliado == "") {
+        print('⚠️ Datos del afiliado vacíos');
+        return ValidacionCajacopi.error("Datos del afiliado no disponibles");
+      }
+
+      final regimen = datosAfiliado['REGIMEN'] ?? ''; // Regimen del afiliado
+      final map = {
+        'existe': true,
+        'estado': estado,
+        'regimen': regimen,
+        'activo': estado == 'ACTIVO',
+        'datos': datosAfiliado,
+        'mensaje': null,
+      };
+
+      print('✅ Afiliado encontrado:');
+      print('   Estado: $estado');
+      print('   Régimen: $regimen');
+      print('   Activo: ${estado == 'ACTIVO' ? 'Sí' : 'No'}');
+
+      return ValidacionCajacopi.fromJson(map);
+
     } catch (e) {
       print('💥 Error consultando Cajacopi: $e');
-      return ValidacionCajacopi.error('No se pudo validar el estado de afiliación: $e');
+      return ValidacionCajacopi.error("No se pudo validar el estado de afiliación: ${e.toString()}");
     }
   }
-
-  /// Nota: la lógica de mensajes se centraliza en ValidacionCajacopi.
 }

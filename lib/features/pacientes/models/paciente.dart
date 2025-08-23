@@ -12,6 +12,8 @@ class Paciente {
   final String tipoIdentificacionDescripcion; // Mismo que tipoIdentificacion
   final String? tipoIdentificacionNombre; // Nombre completo del tipo
   final ValidacionCajacopi? validacionCajacopi;
+  final bool ultimoExamenReciente; // true si tuvo examen en el último año
+  final String? estadoUltimoExamen; // Estado del último examen si existe
 
   Paciente({
     required this.cedula,
@@ -25,6 +27,8 @@ class Paciente {
     this.tipoIdentificacionDescripcion = 'CC',
     this.tipoIdentificacionNombre,
     this.validacionCajacopi,
+    this.ultimoExamenReciente = false,
+    this.estadoUltimoExamen,
   });
 
   /// Verifica si el paciente es apto para agendar
@@ -40,12 +44,10 @@ class Paciente {
       if (!afiliacionActiva) return false;
     }
 
-    // Criterio 3: Último examen hace 2 años o más
-    if (fechaUltimoExamen != null) {
-      final diferencia = DateTime.now().difference(fechaUltimoExamen!);
-      if (diferencia.inDays < 730) return false; // Menos de 2 años
-    }
-
+    // Criterio 3: Último examen hace más de 1 año (o nunca lo ha tenido)
+    // Si hay un indicador explícito de último examen en el último año, no es apto
+    if (ultimoExamenReciente) return false;
+    
     return true;
   }
 
@@ -63,14 +65,43 @@ class Paciente {
       return 'La paciente debe estar afiliada activa en Cajacopi EPS';
     }
 
-    if (fechaUltimoExamen != null) {
-      final diferencia = DateTime.now().difference(fechaUltimoExamen!);
-      if (diferencia.inDays < 730) {
-        return 'El último examen fue hace menos de 2 años';
+    if (ultimoExamenReciente) {
+      if (fechaUltimoExamen != null) {
+        final diferencia = DateTime.now().difference(fechaUltimoExamen!);
+        final dias = diferencia.inDays;
+        final meses = (dias / 30).floor();
+        
+        if (meses > 0) {
+          return 'El último examen fue hace aproximadamente $meses ${meses == 1 ? 'mes' : 'meses'}';
+        } else {
+          return 'El último examen fue hace $dias ${dias == 1 ? 'día' : 'días'}';
+        }
       }
+      return 'El último examen fue hace menos de 1 año';
     }
 
     return 'No cumple con los criterios de elegibilidad';
+  }
+
+  /// Obtiene información detallada del último examen
+  String? get infoUltimoExamen {
+    if (fechaUltimoExamen == null) return null;
+    
+    final diferencia = DateTime.now().difference(fechaUltimoExamen!);
+    final dias = diferencia.inDays;
+    final meses = (dias / 30).floor();
+    final anos = (dias / 365).floor();
+    
+    String tiempoTranscurrido;
+    if (anos > 0) {
+      tiempoTranscurrido = 'Hace $anos ${anos == 1 ? 'año' : 'años'}';
+    } else if (meses > 0) {
+      tiempoTranscurrido = 'Hace $meses ${meses == 1 ? 'mes' : 'meses'}';
+    } else {
+      tiempoTranscurrido = 'Hace $dias ${dias == 1 ? 'día' : 'días'}';
+    }
+    
+    return tiempoTranscurrido;
   }
 
   /// Obtiene el nombre completo del tipo de documento o un valor por defecto
@@ -89,6 +120,9 @@ class Paciente {
     return '';
   }
 
+  /// Indica si nunca ha tenido un examen
+  bool get nuncaTuvoExamen => fechaUltimoExamen == null && !ultimoExamenReciente;
+
   /// Crea una copia del paciente con valores actualizados
   Paciente copyWith({
     String? cedula,
@@ -102,6 +136,8 @@ class Paciente {
     String? tipoIdentificacionDescripcion,
     String? tipoIdentificacionNombre,
     ValidacionCajacopi? validacionCajacopi,
+    bool? ultimoExamenReciente,
+    String? estadoUltimoExamen,
   }) {
     return Paciente(
       cedula: cedula ?? this.cedula,
@@ -115,6 +151,8 @@ class Paciente {
       tipoIdentificacionDescripcion: tipoIdentificacionDescripcion ?? this.tipoIdentificacionDescripcion,
       tipoIdentificacionNombre: tipoIdentificacionNombre ?? this.tipoIdentificacionNombre,
       validacionCajacopi: validacionCajacopi ?? this.validacionCajacopi,
+      ultimoExamenReciente: ultimoExamenReciente ?? this.ultimoExamenReciente,
+      estadoUltimoExamen: estadoUltimoExamen ?? this.estadoUltimoExamen,
     );
   }
 }

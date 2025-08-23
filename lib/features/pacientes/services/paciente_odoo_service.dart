@@ -11,6 +11,7 @@ class PacienteOdooService {
     final s = v.toString();
     return s.trim();
   }
+  
   /// Busca un paciente por número de documento en el modelo hms.patient
   static Future<Paciente?> buscarPorDocumento(String numeroDocumento) async {
     try {
@@ -29,7 +30,7 @@ class PacienteOdooService {
 
       final documentoTrim = numeroDocumento.trim();
       
-      // Campos a obtener, incluyendo el description del tipo de documento
+      // Campos a obtener
       final fields = [
         'id',
         'name',
@@ -76,46 +77,144 @@ class PacienteOdooService {
 
       final data = results.first as Map<String, dynamic>;
       
-      // Ahora necesitamos obtener el description del tipo de documento
-      // usando la notación de punto como en Odoo Python
-      String tipoDocumentoDescription = ''; // Default vacío -> no mostrar si no existe
+      // Obtener el description del tipo de documento
+      String tipoDocumentoDescription = '';
       String tipoDocumentoNombre = '';
       
       if (data['l10n_latam_identification_type_id'] != null) {
         final tipoField = data['l10n_latam_identification_type_id'];
         
-        // El campo viene como [id, "name"]
         if (tipoField is List && tipoField.length > 1) {
           final tipoId = tipoField[0];
           tipoDocumentoNombre = tipoField[1].toString();
           
-          // Ahora obtenemos el description del tipo de documento
           try {
             final tipoDocResults = await OdooService.searchRead(
               'l10n_latam.identification.type',
               domain: [['id', '=', tipoId]],
-              fields: ['id', 'name', 'description'],
+              fields: ['id', 'name', 'description', 'l10n_co_document_code'],
               limit: 1,
             );
             
             if (tipoDocResults.isNotEmpty) {
               final tipoDocData = tipoDocResults.first as Map<String, dynamic>;
-              // Normalizar: evitar 'false' si el campo viene como boolean
-              tipoDocumentoDescription = _normalizeDescription(tipoDocData['description'] ?? tipoDocData['l10n_co_document_code'] ?? tipoDocData['code']);
-              if (tipoDocumentoDescription.isEmpty) tipoDocumentoDescription = '';
-              print('📄 Tipo documento description obtenido: $tipoDocumentoDescription');
+              tipoDocumentoDescription = _normalizeDescription(
+                tipoDocData['description'] ?? 
+                tipoDocData['l10n_co_document_code']
+              );
+              print('📄 Tipo documento: $tipoDocumentoDescription');
             }
           } catch (e) {
-            print('⚠️ No se pudo obtener el description del tipo de documento: $e');
+            print('⚠️ Error obteniendo tipo de documento: $e');
           }
         }
       }
       
       print('✅ Paciente encontrado');
-      print('   Tipo documento description: $tipoDocumentoDescription');
-      print('   Tipo documento nombre: $tipoDocumentoNombre');
-      
-      final paciente = _mapearPacienteDesdeOdoo(data, tipoDocumentoDescription, tipoDocumentoNombre);
+      var paciente = _mapearPacienteDesdeOdoo(data, tipoDocumentoDescription, tipoDocumentoNombre);
+
+      // Consultar último examen usando el método de Odoo
+      try {
+        final tipoParaConsulta = tipoDocumentoDescription.isNotEmpty 
+            ? tipoDocumentoDescription 
+            : 'CC';
+            
+        print('🔎 Consultando último examen...');
+        print('   Tipo: $tipoParaConsulta');
+        print('   Identificación: ${paciente.cedula}');
+
+        final payload = {
+          'model': 'hms.appointment',
+          'method': 'validar_ultima_cita_bot',
+          'args': [
+            [], // Lista vacía de IDs
+            tipoParaConsulta,
+            paciente.cedula,
+            13, // procedimiento tamizaje
+          ],
+          'kwargs': {},
+        };
+
+        final response = await OdooService.client.callKw(payload);
+        print('📨 Respuesta de validar_ultima_cita_bot: $response');
+
+        // El método retorna un recordset de Odoo
+        // hms.appointment() → Recordset vacío → NO hay citas en el último año → Paciente APTO
+        // hms.appointment(ID,) → Recordset con registro → SÍ hay cita en el último año → Paciente NO APTO
+        bool tuvoExamenReciente = false;
+        DateTime? fechaUltimoExamen;
+        
+        if (response != null) {
+          final responseStr = response.toString();
+          print('📋 Analizando respuesta: $responseStr');
+          
+          // Verificar si el recordset tiene registros
+          // hms.appointment() = vacío, hms.appointment(123,) = con registro
+          if (responseStr.contains('hms.appointment(') && responseStr.contains(',)')) {
+            // Extraer el ID del registro usando regex
+            final match = RegExp(r'hms\.appointment\((\d+)').firstMatch(responseStr);
+            
+            if (match != null && match.group(1) != null) {
+              // Hay un ID, significa que encontró una cita en el último año
+              tuvoExamenReciente = true;
+              print('❌ Paciente tuvo examen en el último año (no apto)');
+              
+              final appointmentId = int.tryParse(match.group(1)!);
+              
+              if (appointmentId != null) {
+                try {
+                  // Obtener detalles de la cita encontrada
+                  final appointments = await OdooService.searchRead(
+                    'hms.appointment',
+                    domain: [['id', '=', appointmentId]],
+                    fields: ['id', 'date', 'create_date', 'state'],
+                    limit: 1,
+                  );
+                  
+                  if (appointments.isNotEmpty) {
+                    final appointment = appointments.first as Map<String, dynamic>;
+                    
+                    // Intentar obtener la fecha
+                    final dateStr = appointment['date'] ?? appointment['create_date'];
+                    if (dateStr != null) {
+                      try {
+                        fechaUltimoExamen = DateTime.parse(dateStr.toString());
+                        print('📅 Fecha del último examen: $fechaUltimoExamen');
+                      } catch (e) {
+                        print('⚠️ No se pudo parsear la fecha: $e');
+                      }
+                    }
+                  }
+                } catch (e) {
+                  print('⚠️ Error obteniendo detalles de la cita: $e');
+                }
+              }
+            } else {
+              // hms.appointment() sin ID = recordset vacío
+              print('✅ No hay exámenes en el último año (apto si cumple otros criterios)');
+            }
+          } else if (responseStr.contains('hms.appointment()')) {
+            // Recordset vacío explícito
+            print('✅ No hay exámenes en el último año (apto si cumple otros criterios)');
+          } else {
+            // Respuesta inesperada
+            print('⚠️ Respuesta inesperada del método: $responseStr');
+          }
+        } else {
+          print('✅ No hay registro de exámenes previos (apto si cumple otros criterios)');
+        }
+
+        // Actualizar el paciente con la información del último examen
+        paciente = paciente.copyWith(
+          ultimoExamenReciente: tuvoExamenReciente,
+          fechaUltimoExamen: fechaUltimoExamen,
+        );
+        
+      } catch (e) {
+        print('⚠️ Error consultando último examen: $e');
+        // Continuar sin datos del último examen
+      }
+
       return paciente;
     } catch (e) {
       print('💥 Error buscando paciente: $e');
@@ -182,8 +281,12 @@ class PacienteOdooService {
       }
 
       final domain = <List<dynamic>>[];
-      if (nombre != null && nombre.isNotEmpty) domain.add(['name', 'ilike', nombre]);
-      if (cedula != null && cedula.isNotEmpty) domain.add(['vat', 'ilike', cedula]);
+      if (nombre != null && nombre.isNotEmpty) {
+        domain.add(['name', 'ilike', nombre]);
+      }
+      if (cedula != null && cedula.isNotEmpty) {
+        domain.add(['vat', 'ilike', cedula]);
+      }
 
       final results = await OdooService.searchRead(
         'hms.patient',
@@ -202,10 +305,9 @@ class PacienteOdooService {
         offset: offset,
       );
 
-      // Para cada resultado, obtener el tipo de documento
-      // Para cada resultado, obtener el tipo de documento
-       final pacientes = <Paciente>[];
-       for (final data in results) {
+      final pacientes = <Paciente>[];
+      
+      for (final data in results) {
         String tipoDescription = '';
         String tipoNombre = '';
         
@@ -219,14 +321,16 @@ class PacienteOdooService {
               final tipoDocResults = await OdooService.searchRead(
                 'l10n_latam.identification.type',
                 domain: [['id', '=', tipoId]],
-                fields: ['id', 'l10n_co_document_code'],
+                fields: ['id', 'description', 'l10n_co_document_code'],
                 limit: 1,
               );
               
               if (tipoDocResults.isNotEmpty) {
                 final tipoDocData = tipoDocResults.first as Map<String, dynamic>;
-                tipoDescription = _normalizeDescription(tipoDocData['l10n_co_document_code']);
-                if (tipoDescription.isEmpty) tipoDescription = '';
+                tipoDescription = _normalizeDescription(
+                  tipoDocData['description'] ?? 
+                  tipoDocData['l10n_co_document_code']
+                );
               }
             } catch (e) {
               print('⚠️ Error obteniendo tipo de documento: $e');
