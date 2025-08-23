@@ -312,7 +312,7 @@ class UserDrawer extends StatelessWidget {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
                   content: Text('Referido agregado exitosamente'),
-                  backgroundColor: AppColors.success,
+                  backgroundColor: AppColors.primary,
                 ),
               );
             },
