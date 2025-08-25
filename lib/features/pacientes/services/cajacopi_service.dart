@@ -1,4 +1,3 @@
-import 'dart:convert';
 import '../../../core/services/odoo_service.dart'; // Asegúrate de que la ruta sea correcta.
 import '../models/validacion_tamizaje.dart';
 
@@ -19,7 +18,7 @@ class CajacopiService {
         'method': 'get_status_afiliacion_result', // Método a invocar en Odoo
         'args': [
           [], // Lista vacía de IDs porque no necesitamos un registro específico
-          tipoDocumento, 
+          tipoDocumento,
           numeroDocumento
         ],
         'kwargs': {}
@@ -40,6 +39,7 @@ class CajacopiService {
         return ValidacionCajacopi.noExiste();
       }
 
+      
       // Validar que datosAfiliado no sea nulo o vacío antes de acceder a sus campos
       if (datosAfiliado == null || datosAfiliado == "") {
         print('⚠️ Datos del afiliado vacíos');

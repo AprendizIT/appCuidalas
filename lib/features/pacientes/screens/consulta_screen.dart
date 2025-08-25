@@ -48,7 +48,7 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
     });
 
     try {
-      // 1. Buscar paciente en Odoo (sin especificar tipo, lo detecta desde Odoo)
+      // 1. Buscar paciente usando el método optimizado
       var paciente = await PacienteOdooService.buscarPorDocumento(numeroDocumento);
 
       if (paciente != null) {
@@ -57,9 +57,8 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
           // Actualizar UI para mostrar que se está validando con CajaCopi
         });
 
-        print('🔄 Validando en CajaCopi con tipo: ${paciente.tipoIdentificacionDescripcion.isNotEmpty ? paciente.tipoIdentificacionDescripcion : paciente.tipoIdentificacion}');
+        print('Validando en CajaCopi con tipo: ${paciente.tipoIdentificacionDescripcion.isNotEmpty ? paciente.tipoIdentificacionDescripcion : paciente.tipoIdentificacion}');
 
-        // La nueva firma devuelve ValidacionCajacopi directamente
         final ValidacionCajacopi validacionCajacopi = await CajacopiService.consultarAfiliacion(
           tipoDocumento: paciente.tipoIdentificacionDescripcion.isNotEmpty
               ? paciente.tipoIdentificacionDescripcion
@@ -67,7 +66,7 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
           numeroDocumento: paciente.cedula.isNotEmpty ? paciente.cedula : numeroDocumento,
         );
 
-        // 3. Actualizar paciente con la validación de CajaCopi (modelo ya construido)
+        // 3. Actualizar paciente con la validación de CajaCopi
         paciente = paciente.copyWith(
           validacionCajacopi: validacionCajacopi,
         );
@@ -80,12 +79,10 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
 
       setState(() {
         _consultando = false;
-        // No asignamos _pacienteEncontrado aquí para que la UI principal no cambie;
-        // los resultados se mostrarán únicamente en el diálogo.
         if (paciente == null) {
           _errorMessage = 'Documento no encontrado en el sistema';
         } else {
-          // 📊 Registrar consulta en analytics sin mutar la UI principal
+          // Registrar consulta en analytics
           final analytics = ConsultasAnalyticsService();
           if (paciente.esAptoParaAgendar) {
             analytics.registrarConsultaApta();
@@ -110,7 +107,6 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
     }
   }
 
-  // Muestra un diálogo con la información y controles de la consulta
   void _showResultadosPopup(Paciente paciente) {
     showDialog<void>(
       context: context,
@@ -130,13 +126,17 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Icon(Icons.person, color: AppColors.primary, size: 20),
-                      const SizedBox(width: 8),
-                      Text('Información del paciente',
-                          style: Theme.of(context)
-                              .textTheme
-                              .titleMedium
-                              ?.copyWith(color: AppColors.primary)),
+                      Row(
+                        children: [
+                          const Icon(Icons.person, color: AppColors.primary, size: 20),
+                          const SizedBox(width: 8),
+                          Text('Información del paciente',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(color: AppColors.primary)),
+                        ],
+                      ),
                       IconButton(
                         onPressed: () {
                           setState(() {
@@ -173,9 +173,7 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
           mainAxisSize: MainAxisSize.min,
           children: [
             const SizedBox(height: 6),
-            // Campo único: Número de identificación
             if (_pacienteEncontrado == null) ...[
-              // Input antes de la consulta
               Text(
                 'Número de identificación',
                 style: Theme.of(context)
@@ -186,7 +184,7 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
               const SizedBox(height: 8),
               TextField(
                 controller: _idCtrl,
-                keyboardType: TextInputType.text, // Permitir letras y números
+                keyboardType: TextInputType.text,
                 decoration: InputDecoration(
                   hintText: 'Ingrese número de documento',
                   errorText: _errorMessage,
@@ -194,7 +192,6 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
                 onSubmitted: (_) => _consultarPaciente(),
               ),
             ] else ...[
-              // Después de la consulta, mostrar el campo en modo solo lectura
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
@@ -259,7 +256,6 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
                                 ),
                               ),
                               const SizedBox(width: 8),
-                              // Mostrar tipo de documento (sigla) con tooltip que muestra la misma sigla
                               if (_pacienteEncontrado!.tipoIdentificacionDescripcion.isNotEmpty)
                                 Tooltip(
                                   message: _pacienteEncontrado!.nombreTipoDocumento,
@@ -284,7 +280,6 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
                         ],
                       ),
                     ),
-                    // Botón para editar el número
                     IconButton(
                       onPressed: () {
                         setState(() {
@@ -325,7 +320,6 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
               const SizedBox(height: 16),
               _buildEstadoValidacion(_pacienteEncontrado!),
             ],
-            // Solo mostrar botón si no se ha consultado aún
             if (_pacienteEncontrado == null && !_consultando) ...[
               const SizedBox(height: 16),
               SizedBox(
@@ -340,8 +334,6 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
                 ),
               ),
             ],
-
-            // Mostrar loading cuando está consultando
             if (_consultando) ...[
               const SizedBox(height: 16),
               Container(
@@ -489,7 +481,6 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
     return Column(
       children: [
         if (esApto) ...[
-          // Botón principal - Agendar
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
@@ -502,7 +493,6 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
             ),
           ),
         ] else ...[
-          // Mensaje de no elegibilidad
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(16),
@@ -540,15 +530,11 @@ class _ConsultaWidgetState extends State<ConsultaWidget> {
             ),
           ),
         ],
-
         const SizedBox(height: 16),
-
-        // Botón "Nueva consulta" - aparece siempre después de cualquier consulta
         SizedBox(
           width: double.infinity,
           child: OutlinedButton.icon(
             onPressed: () {
-              // Cerrar diálogo si viene desde el modal
               if (cerrarDialogo) Navigator.of(context).pop();
 
               setState(() {
